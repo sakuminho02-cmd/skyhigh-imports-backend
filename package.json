@@ -5,7 +5,7 @@
   "description": "Backend de pagamentos da SKYHIGH IMPORTS com Mercado Pago",
   "main": "servidor.js",
   "scripts": {
-    "start": "node src/servidor.js"
+    "start": "node servidor.js"
   },
   "engines": {
     "node": ">=18"
