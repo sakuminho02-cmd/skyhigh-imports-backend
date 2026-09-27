@@ -1,80 +1,108 @@
-import express from "express";
-import cors from "cors";
-import "dotenv/config";
-import crypto from "node:crypto";
-import { MercadoPagoConfig, Order } from "mercadopago";
+importconst express = require("express");
+const cors = require("cors");
 
 const app = express();
 const PORT = process.env.PORT || 3000;
-app.use(cors({origin: process.env.FRONTEND_ORIGIN || "*"}));
-app.use(express.json({limit:"100kb"}));
+const MP_ACCESS_TOKEN = process.env.MP_ACCESS_TOKEN;
 
-const token = process.env.MP_ACCESS_TOKEN;
-const client = token ? new MercadoPagoConfig({accessToken: token, options:{timeout:10000}}) : null;
-const orders = client ? new Order(client) : null;
+app.use(cors());
+app.use(express.json());
 
-function money(v){
-  const n=Number(v);
-  if(!Number.isFinite(n)||n<=0||n>1000000) throw new Error("Valor inválido.");
-  return n.toFixed(2);
-}
-function email(v){
-  if(typeof v!=="string" || !v.includes("@") || v.length>200) throw new Error("E-mail inválido.");
-  return v.trim();
-}
+app.get("/", (req, res) => {
+  res.json({
+    ok: true,
+    service: "SKYHIGH IMPORTS backend",
+    status: "online"
+  });
+});
 
-app.get("/health",(req,res)=>res.json({ok:true,service:"SKYHIGH IMPORTS backend",mercadopagoConfigured:Boolean(token)}));
+app.get("/health", (req, res) => {
+  res.json({
+    ok: true,
+    mercadoPagoConfigured: Boolean(MP_ACCESS_TOKEN)
+  });
+});
 
-app.post("/api/orders",async(req,res)=>{
-  try{
-    if(!orders) return res.status(503).json({error:"Backend ainda não configurado.",detail:"Adicione MP_ACCESS_TOKEN no Render."});
-    const {amount,email:payerEmail,paymentMethod="pix",cardToken,paymentMethodId,installments=1}=req.body||{};
-    const total=money(amount), payer=email(payerEmail);
-    const payment={amount:total,payment_method:{}};
-
-    if(paymentMethod==="pix"){
-      payment.payment_method={id:"pix",type:"bank_transfer"};
-      payment.expiration_time="PT24H";
-    }else if(paymentMethod==="credit_card"||paymentMethod==="debit_card"){
-      if(!cardToken) return res.status(400).json({error:"Token do cartão ausente."});
-      if(!paymentMethodId) return res.status(400).json({error:"paymentMethodId ausente."});
-      const inst=Number(installments);
-      if(!Number.isInteger(inst)||inst<1||inst>24) return res.status(400).json({error:"Parcelas inválidas."});
-      payment.payment_method={id:paymentMethodId,type:paymentMethod,token:cardToken,installments:inst};
-    }else{
-      return res.status(400).json({error:"Forma de pagamento não suportada.",allowed:["pix","credit_card","debit_card"]});
+app.post("/criar-pagamento", async (req, res) => {
+  try {
+    if (!MP_ACCESS_TOKEN) {
+      return res.status(500).json({
+        error: "MP_ACCESS_TOKEN não configurado no servidor."
+      });
     }
 
-    const result=await orders.create({
-      body:{
-        type:"online",processing_mode:"automatic",
-        total_amount:total,
-        external_reference:`SKYHIGH-${Date.now()}-${crypto.randomUUID().slice(0,8)}`,
-        payer:{email:payer},
-        transactions:{payments:[payment]}
-      },
-      requestOptions:{idempotencyKey:crypto.randomUUID()}
+    const { title, price, quantity = 1, external_reference } = req.body;
+
+    const unitPrice = Number(price);
+    const qty = Number(quantity);
+
+    if (
+      !title ||
+      !Number.isFinite(unitPrice) ||
+      unitPrice <= 0 ||
+      !Number.isInteger(qty) ||
+      qty < 1
+    ) {
+      return res.status(400).json({
+        error: "Envie title, price e quantity válidos."
+      });
+    }
+
+    const preference = {
+      items: [
+        {
+          title: String(title),
+          quantity: qty,
+          currency_id: "BRL",
+          unit_price: unitPrice
+        }
+      ],
+      external_reference: external_reference
+        ? String(external_reference)
+        : `skyhigh-${Date.now()}`
+    };
+
+    const response = await fetch(
+      "https://api.mercadopago.com/checkout/preferences",
+      {
+        method: "POST",
+        headers: {
+          "Content-Type": "application/json",
+          "Authorization": `Bearer ${MP_ACCESS_TOKEN}`
+        },
+        body: JSON.stringify(preference)
+      }
+    );
+
+    const data = await response.json();
+
+    if (!response.ok) {
+      console.error("Mercado Pago:", data);
+
+      return res.status(response.status).json({
+        error: "Mercado Pago recusou a criação do pagamento.",
+        details: data
+      });
+    }
+
+    res.json({
+      ok: true,
+      preference_id: data.id,
+      init_point: data.init_point,
+      sandbox_init_point: data.sandbox_init_point || null
     });
 
-    const p=result?.transactions?.payments?.[0];
-    const pm=p?.payment_method;
-    res.status(201).json({
-      orderId:result.id,status:result.status,statusDetail:result.status_detail,
-      paymentId:p?.id||null,
-      pix:paymentMethod==="pix"?{qrCode:pm?.qr_code||null,qrCodeBase64:pm?.qr_code_base64||null,ticketUrl:pm?.ticket_url||null}:null
+  } catch (error) {
+    console.error(error);
+
+    res.status(500).json({
+      error: "Erro interno ao criar pagamento."
     });
-  }catch(e){
-    console.error(e);
-    res.status(500).json({error:"Não foi possível criar o pagamento.",detail:e?.message||"Erro desconhecido."});
   }
 });
 
-app.get("/api/orders/:id",async(req,res)=>{
-  try{
-    if(!orders) return res.status(503).json({error:"Backend ainda não configurado."});
-    const r=await orders.get({id:req.params.id});
-    res.json({orderId:r.id,status:r.status,statusDetail:r.status_detail,raw:r});
-  }catch(e){res.status(500).json({error:"Não foi possível consultar o pedido.",detail:e?.message||"Erro desconhecido."});}
+app.listen(PORT, () => {
+  console.log(
+    `SKYHIGH IMPORTS backend rodando na porta ${PORT}`
+  );
 });
-
-app.listen(PORT,()=>console.log(`SKYHIGH backend na porta ${PORT}`));
