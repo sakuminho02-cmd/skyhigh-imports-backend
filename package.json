@@ -2,17 +2,16 @@
   "name": "skyhigh-imports-backend",
   "version": "1.0.0",
   "private": true,
-  "type": "module",
+  "description": "Backend de pagamentos da SKYHIGH IMPORTS com Mercado Pago",
+  "main": "servidor.js",
+  "scripts": {
+    "start": "node servidor.js"
+  },
   "engines": {
     "node": ">=18"
   },
-  "scripts": {
-    "start": "node server.js"
-  },
   "dependencies": {
     "cors": "^2.8.5",
-    "dotenv": "^16.6.1",
-    "express": "^5.1.0",
-    "mercadopago": "^3.6.1"
+    "express": "^4.21.2"
   }
 }
